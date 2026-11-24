@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Radar%20ADS-B_%20%C5%9Aledzenie%20lot%C3%B3w%20w%20czasie%20rzeczywistym.png" alt="ADS-B Home Radar: aircraft tracking and flight analytics banner" width="100%">
+</p>
+
 # ADS-B Home Radar 📡
 
 **English** | [Polski](#polski)
