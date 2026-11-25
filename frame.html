@@ -127,6 +127,12 @@
 <label><span><input type="checkbox" id="spVoice"> Polski komunikat głosowy</span></label>
 <label><span><input type="checkbox" id="spSound"> Dodatkowy sygnał dźwiękowy</span></label>
 <label><span><input type="checkbox" id="spNight"> Zezwól na dźwięk i głos w nocy</span></label>
+<label>Silnik głosu <select id="spEngine"><option value="auto">Automatyczny</option><option value="piper">Piper TTS</option><option value="browser">Przeglądarka</option></select></label>
+<label>Głos Piper <select id="spModel"><option value="pl_PL-gosia-medium">Gosia</option><option value="pl_PL-darkman-medium">Darkman</option></select></label>
+<label>Głośność głosu (%) <input id="spVolume" type="number" min="0" max="100" value="80"></label>
+<label>Szybkość głosu <input id="spRate" type="number" min="0.5" max="2" step="0.05" value="1"></label>
+<label><span><input type="checkbox" id="spDetailed"> Szczegółowe komunikaty</span></label>
+<small id="spHealth"></small>
 <button type="button" id="spTest">Test głosu</button><small id="spStatus"></small></fieldset>
 <button type="submit">Zapisz i odśwież radar</button><p id="settingsError" role="alert"></p></form>
 </div>
@@ -1185,16 +1191,26 @@ $("settingsbtn").onkeydown=function(e){if(e.key==="Enter"||e.key===" "){e.preven
 $("settingsClose").onclick=function(){$("radarSettings").style.display="none";};
 $("radarSettingsForm").onsubmit=function(e){e.preventDefault();if(!this.reportValidity())return;
  var next=Object.assign({},USER_CONFIG,{homeLat:$("setLat").valueAsNumber,homeLon:$("setLon").valueAsNumber,homeAltM:$("setAlt").valueAsNumber,radarUpDeg:$("setUp").valueAsNumber,chimeVolume:$("setVol").valueAsNumber/100});
- specialFields.forEach(function(k){next[k]=$(k).checked;});
+ specialFields.forEach(function(k){next[k]=$(k).checked;}); Object.assign(next,voiceOptions(true));
  try{localStorage.setItem(SETTINGS_KEY,JSON.stringify(next));persistHistory();location.reload();}catch(err){$("settingsError").textContent="Nie udało się zapisać ustawień w pamięci przeglądarki.";}
 };
 var specialFields=["spRare","spMilitary","spRescue","spEmergency","spFavorite","spVoice","spSound","spNight"],specialDefaults={spRare:true,spMilitary:true,spRescue:true,spEmergency:true,spFavorite:true,spVoice:false,spSound:true,spNight:false},specialSeen=Object.create(null),specialQueue=[],specialTimer=null,specialAudioReady=false;
 function specialEnabled(k){return typeof USER_CONFIG[k]==="boolean"?USER_CONFIG[k]:specialDefaults[k];}
-function specialLoadForm(){specialFields.forEach(function(k){$(k).checked=specialEnabled(k);});}
-function specialSpeak(msg,test){if(!("speechSynthesis" in window)||typeof SpeechSynthesisUtterance==="undefined"){if(test)$("spStatus").textContent="Synteza mowy niedostępna.";return;}try{var u=new SpeechSynthesisUtterance(msg);u.lang="pl-PL";u.rate=.95;u.volume=test?Math.max(.3,CHIME_VOLUME):CHIME_VOLUME;var voices=speechSynthesis.getVoices();var pl=voices.find(function(v){return /^pl[-_]/i.test(v.lang);});if(pl)u.voice=pl;u.onerror=function(){if(test)$("spStatus").textContent="Nie udało się odtworzyć głosu.";};speechSynthesis.speak(u);if(test)$("spStatus").textContent="Uruchomiono próbę głosu.";}catch(e){if(test)$("spStatus").textContent="Błąd syntezy mowy.";}}
+function voiceOptions(form){
+ var c=USER_CONFIG;
+ return {spEngine:form?$("spEngine").value:(["auto","piper","browser"].includes(c.spEngine)?c.spEngine:"auto"),spModel:form?$("spModel").value:(c.spModel||"pl_PL-gosia-medium"),spVolume:form?Number($("spVolume").value):Math.max(0,Math.min(100,Number.isFinite(c.spVolume)?c.spVolume:80)),spRate:form?Number($("spRate").value):Math.max(.5,Math.min(2,Number.isFinite(c.spRate)?c.spRate:1)),spDetailed:form?$("spDetailed").checked:!!c.spDetailed};
+}
+async function voiceFetch(path,opts,ms){var ctl=new AbortController(),timer=setTimeout(function(){ctl.abort();},ms);try{var r=await fetch("/tts/"+path,Object.assign({},opts,{signal:ctl.signal,cache:"no-store"}));if(!r.ok)throw Error("HTTP "+r.status);return path==="speak"?await r.blob():await r.json();}finally{clearTimeout(timer);}}
+async function voiceHealth(){try{var h=await voiceFetch("health",{},3000),models=await voiceFetch("voices",{},3000);if(h.status!=="ok"||!Array.isArray(models)||!models.length)throw Error("Brak modeli");var el=$("spModel"),selected=el.value;el.textContent="";models.filter(function(m){return typeof m==="string";}).forEach(function(m){var o=document.createElement("option");o.value=m;o.textContent=m==="pl_PL-gosia-medium"?"Gosia":m==="pl_PL-darkman-medium"?"Darkman":m;el.appendChild(o);});if(models.includes(selected))el.value=selected;$("spHealth").textContent="Piper dostępny · "+models.length+" modeli";}catch(e){$("spHealth").textContent="Piper niedostępny";}}
+function specialLoadForm(){specialFields.forEach(function(k){$(k).checked=specialEnabled(k);});var c=voiceOptions(false);["spEngine","spModel","spVolume","spRate"].forEach(function(k){$(k).value=c[k];});$("spDetailed").checked=c.spDetailed;voiceHealth();}
+var voiceQueue=[],voiceBusy=false;
+function browserVoice(msg,c){return new Promise(function(resolve,reject){if(!("speechSynthesis" in window)||typeof SpeechSynthesisUtterance==="undefined"){reject(Error("Brak syntezatora"));return;}var u=new SpeechSynthesisUtterance(msg),timer=setTimeout(function(){speechSynthesis.cancel();reject(Error("Timeout"));},45000);u.lang="pl-PL";u.rate=c.spRate;u.volume=c.spVolume/100;var pl=speechSynthesis.getVoices().find(function(v){return /^pl[-_]/i.test(v.lang);});if(pl)u.voice=pl;u.onend=function(){clearTimeout(timer);resolve();};u.onerror=function(){clearTimeout(timer);reject(Error("Błąd głosu przeglądarki"));};try{speechSynthesis.speak(u);}catch(e){clearTimeout(timer);reject(e);}});}
+async function piperVoice(msg,c){var blob=await voiceFetch("speak",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:msg.slice(0,500),voice:c.spModel})},65000);if(!/audio\//i.test(blob.type))throw Error("Nieprawidłowy dźwięk");var url=URL.createObjectURL(blob),audio=new Audio(url);try{audio.volume=c.spVolume/100;audio.playbackRate=c.spRate;await new Promise(function(resolve,reject){var timer=setTimeout(function(){audio.pause();reject(Error("Timeout audio"));},45000);function done(err){clearTimeout(timer);err?reject(err):resolve();}audio.onended=function(){done();};audio.onerror=function(){done(Error("Błąd audio"));};audio.play().catch(done);});}finally{audio.pause();URL.revokeObjectURL(url);}}
+async function drainVoice(){if(voiceBusy)return;voiceBusy=true;try{while(voiceQueue.length){var q=voiceQueue.shift(),c=q.c;try{if(q.test)$("spStatus").textContent="Generowanie komunikatu…";var engine=c.spEngine;if(engine!=="browser"){try{await piperVoice(q.msg,c);engine="piper";}catch(e){if(engine!=="auto")throw e;engine="browser";await browserVoice(q.msg,c);}}else await browserVoice(q.msg,c);if(q.test)$("spStatus").textContent="Test OK · "+engine;}catch(e){if(q.test)$("spStatus").textContent="Błąd odtwarzania: "+e.message;}}}finally{voiceBusy=false;}}
+function specialSpeak(msg,test){if(voiceQueue.length>=12){if(test)$("spStatus").textContent="Kolejka pełna";return;}voiceQueue.push({msg:msg,test:test,c:voiceOptions(test)});drainVoice();}
 $("spTest").onclick=function(){specialSpeak("Test powiadomienia. Radar lotniczy jest gotowy.",true);};
 function specialShow(){if(specialTimer||!specialQueue.length)return;var e=specialQueue.shift(),el=$("specialAlert");el.style.borderColor=e.color;$("specialCategory").style.color=e.color;$("specialCategory").textContent=e.label;$("specialTitle").textContent=e.title;$("specialDetails").textContent=e.details;el.style.display="block";
- if(!isNight()||specialEnabled("spNight")){if(specialEnabled("spSound")){try{chime();}catch(err){}}if(specialEnabled("spVoice"))specialSpeak("Uwaga. "+e.label+". "+e.title,false);}
+ if(!isNight()||specialEnabled("spNight")){if(specialEnabled("spSound")){try{chime();}catch(err){}}if(specialEnabled("spVoice"))specialSpeak("Uwaga. "+e.label+". "+e.title+(voiceOptions(false).spDetailed?". "+e.details.replace(/ km\/h/g," kilometrów na godzinę").replace(/ km/g," kilometrów").replace(/ m\b/g," metrów").replace(/ · /g,". "):""),false);}
  specialTimer=setTimeout(specialDismiss,12000);}
 function specialDismiss(){clearTimeout(specialTimer);specialTimer=null;$("specialAlert").style.display="none";specialShow();}
 $("specialClose").onclick=specialDismiss;
