@@ -103,6 +103,7 @@
 </div>
 
 <div id="alertControl">WYKRYWANIE <select id="alertRange" aria-label="Promień wykrywania"></select></div>
+<div id="specialAlert" role="status" style="display:none;position:absolute;top:12vh;left:50%;transform:translateX(-50%);width:min(86vw,540px);z-index:13;background:#091725;color:#eaf6ff;border:3px solid #e9b74e;border-radius:12px;padding:16px;box-sizing:border-box;box-shadow:0 8px 30px #0009;pointer-events:auto"><button id="specialClose" style="float:right;background:#123047;color:white;border:1px solid #42677e;border-radius:5px;padding:6px">✕</button><div id="specialCategory" style="font-weight:bold"></div><h2 id="specialTitle" style="margin:.4em 0"></h2><div id="specialDetails"></div></div>
 <div id="labPanel" style="display:none;position:absolute;inset:0;z-index:14;background:#091725;color:#eaf6ff;padding:3vh 3vw;overflow:auto;box-sizing:border-box;font-size:clamp(14px,2vh,22px)">
 <button id="labClose" style="float:right">✕ Radar</button><h2>Laboratorium ADS-B</h2>
 <nav id="labNav"><button data-lab="range">Zasięg</button><button data-lab="spot">PlaneSpotter</button><button data-lab="sky">SkyView</button><button data-lab="alerts">Alerty i przeloty</button><button data-lab="diag">Diagnostyka</button></nav>
@@ -117,6 +118,16 @@
 <label>Wysokość n.p.m. (m)<input id="setAlt" type="number" min="-500" max="9000" step="any" required></label>
 <label>Orientacja radaru (0 = północ, 90 = wschód)<input id="setUp" type="number" min="0" max="359" step="1" required></label>
 <label>Głośność dzienna (%)<input id="setVol" type="number" min="0" max="100" step="1" required></label>
+<fieldset><legend>Powiadomienia specjalne</legend>
+<label><span><input type="checkbox" id="spRare"> Rzadkie typy</span></label>
+<label><span><input type="checkbox" id="spMilitary"> Wojskowe (metadane odbiornika)</span></label>
+<label><span><input type="checkbox" id="spRescue"> Ratunkowe (rozpoznany callsign)</span></label>
+<label><span><input type="checkbox" id="spEmergency"> Kody awaryjne</span></label>
+<label><span><input type="checkbox" id="spFavorite"> Ulubione</span></label>
+<label><span><input type="checkbox" id="spVoice"> Polski komunikat głosowy</span></label>
+<label><span><input type="checkbox" id="spSound"> Dodatkowy sygnał dźwiękowy</span></label>
+<label><span><input type="checkbox" id="spNight"> Zezwól na dźwięk i głos w nocy</span></label>
+<button type="button" id="spTest">Test głosu</button><small id="spStatus"></small></fieldset>
 <button type="submit">Zapisz i odśwież radar</button><p id="settingsError" role="alert"></p></form>
 </div>
 <style>#radarSettings label{display:grid;gap:.4vh} #radarSettings input,#radarSettings button{background:#123047;color:#eaf6ff;border:1px solid #42677e;border-radius:8px;padding:.6em;font:inherit;box-sizing:border-box} #settingsbtn{font-size:1.55vh}</style>
@@ -1167,15 +1178,37 @@ function showHistory(){archiveDay();enrichArchive();persistHistory();var days=Nu
 $("historybtn").onclick=function(){$("history").style.display="block";showHistory();};$("histClose").onclick=function(){$("history").style.display="none";};$("histPeriod").onchange=showHistory;$("histExport").onclick=function(){archiveDay();persistHistory();var url=URL.createObjectURL(new Blob([JSON.stringify(historyDays,null,2)],{type:"application/json"}));var a=document.createElement("a");a.href=url;a.download="adsb-history-"+dayKey()+".json";a.click();setTimeout(function(){URL.revokeObjectURL(url);},1000);};
 ALERT_RANGES.forEach(function(n){var o=document.createElement("option");o.value=n;o.textContent=n+" km";$("alertRange").appendChild(o);});$("alertRange").value=RADIUS_KM;$("alertRange").onchange=function(){RADIUS_KM=Number(this.value);try{localStorage.setItem("adsbAlertRange",String(RADIUS_KM));}catch(e){}renderBigRadar();};
 function openRadarSettings(){
- $("setLat").value=HOME_LAT;$("setLon").value=HOME_LON;$("setAlt").value=HOME_ALT_M;$("setUp").value=RADAR_UP_DEG;$("setVol").value=Math.round(CHIME_VOLUME*100);$("settingsError").textContent="";$("radarSettings").style.display="block";
+ $("setLat").value=HOME_LAT;$("setLon").value=HOME_LON;$("setAlt").value=HOME_ALT_M;$("setUp").value=RADAR_UP_DEG;$("setVol").value=Math.round(CHIME_VOLUME*100); specialLoadForm();$("settingsError").textContent="";$("radarSettings").style.display="block";
 }
 $("settingsbtn").onclick=openRadarSettings;
 $("settingsbtn").onkeydown=function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();openRadarSettings();}};
 $("settingsClose").onclick=function(){$("radarSettings").style.display="none";};
 $("radarSettingsForm").onsubmit=function(e){e.preventDefault();if(!this.reportValidity())return;
  var next=Object.assign({},USER_CONFIG,{homeLat:$("setLat").valueAsNumber,homeLon:$("setLon").valueAsNumber,homeAltM:$("setAlt").valueAsNumber,radarUpDeg:$("setUp").valueAsNumber,chimeVolume:$("setVol").valueAsNumber/100});
+ specialFields.forEach(function(k){next[k]=$(k).checked;});
  try{localStorage.setItem(SETTINGS_KEY,JSON.stringify(next));persistHistory();location.reload();}catch(err){$("settingsError").textContent="Nie udało się zapisać ustawień w pamięci przeglądarki.";}
 };
+var specialFields=["spRare","spMilitary","spRescue","spEmergency","spFavorite","spVoice","spSound","spNight"],specialDefaults={spRare:true,spMilitary:true,spRescue:true,spEmergency:true,spFavorite:true,spVoice:false,spSound:true,spNight:false},specialSeen=Object.create(null),specialQueue=[],specialTimer=null,specialAudioReady=false;
+function specialEnabled(k){return typeof USER_CONFIG[k]==="boolean"?USER_CONFIG[k]:specialDefaults[k];}
+function specialLoadForm(){specialFields.forEach(function(k){$(k).checked=specialEnabled(k);});}
+function specialSpeak(msg,test){if(!("speechSynthesis" in window)||typeof SpeechSynthesisUtterance==="undefined"){if(test)$("spStatus").textContent="Synteza mowy niedostępna.";return;}try{var u=new SpeechSynthesisUtterance(msg);u.lang="pl-PL";u.rate=.95;u.volume=test?Math.max(.3,CHIME_VOLUME):CHIME_VOLUME;var voices=speechSynthesis.getVoices();var pl=voices.find(function(v){return /^pl[-_]/i.test(v.lang);});if(pl)u.voice=pl;u.onerror=function(){if(test)$("spStatus").textContent="Nie udało się odtworzyć głosu.";};speechSynthesis.speak(u);if(test)$("spStatus").textContent="Uruchomiono próbę głosu.";}catch(e){if(test)$("spStatus").textContent="Błąd syntezy mowy.";}}
+$("spTest").onclick=function(){specialSpeak("Test powiadomienia. Radar lotniczy jest gotowy.",true);};
+function specialShow(){if(specialTimer||!specialQueue.length)return;var e=specialQueue.shift(),el=$("specialAlert");el.style.borderColor=e.color;$("specialCategory").style.color=e.color;$("specialCategory").textContent=e.label;$("specialTitle").textContent=e.title;$("specialDetails").textContent=e.details;el.style.display="block";
+ if(!isNight()||specialEnabled("spNight")){if(specialEnabled("spSound")){try{chime();}catch(err){}}if(specialEnabled("spVoice"))specialSpeak("Uwaga. "+e.label+". "+e.title,false);}
+ specialTimer=setTimeout(specialDismiss,12000);}
+function specialDismiss(){clearTimeout(specialTimer);specialTimer=null;$("specialAlert").style.display="none";specialShow();}
+$("specialClose").onclick=specialDismiss;
+var specialRare={A388:"Airbus A380",B748:"Boeing 747-8",BLCF:"Boeing Dreamlifter",A337:"Airbus Beluga XL",A3ST:"Airbus Beluga",AN22:"Antonow An-22",A124:"Antonow An-124",C5M:"Lockheed C-5M Galaxy"};
+function specialObserve(a,x,p,now){var type=String(a.t||p.type||"").toUpperCase(),cs=p.cs||a.hex,flags=Number(a.dbFlags)||0,cat=null;
+ if(specialEnabled("spEmergency")&&["7500","7600","7700"].includes(String(a.squawk)))cat=["emergency","Kod awaryjny "+a.squawk,"#ff5555"];
+ else if(specialEnabled("spRescue")&&/^(LPR|RATOWNIK)[0-9]+$/i.test(cs))cat=["rescue","Prawdopodobny lot ratunkowy","#91dc83"];
+ else if(specialEnabled("spMilitary")&&(flags&1))cat=["military","Samolot oznaczony jako wojskowy","#ff9e55"];
+ else if(specialEnabled("spRare")&&specialRare[type])cat=["rare","Nietypowy samolot","#e9b74e"];
+ else if(specialEnabled("spFavorite")&&lab.favorites.includes(String(a.hex).toLowerCase()))cat=["favorite","Ulubiony samolot","#c99aff"];
+ if(!cat)return;var key=String(a.hex)+":"+cat[0]+(cat[0]==="emergency"?a.squawk:"");if(specialSeen[key]&&now-specialSeen[key]<3600000)return;specialSeen[key]=now;
+ var title=specialRare[type]||[type,cs].filter(Boolean).join(" "),h=labAlt(a),details=[cs,p.reg,p.airline,x.d.toFixed(1)+" km",h===null?"":Math.round(h)+" m",Number.isFinite(a.gs)?Math.round(a.gs*1.852)+" km/h":""].filter(Boolean).join(" · ");
+ labEvent("special:"+key,cat[1]+" · "+title,now);if(specialQueue.length<12){specialQueue.push({label:cat[1],title:title,details:details,color:cat[2]});specialShow();}
+}
 var LAB_KEY="adsbHomeLabV1", lab={sites:{},planes:{},events:[],favorites:[],skyDir:0,skyFov:120},labTab="range",labLast=0,labLive={},labSeen=Object.create(null),labError="",labFilter="";
 try{var oldLab=JSON.parse(localStorage.getItem(LAB_KEY)||"null");if(oldLab&&oldLab.sites&&oldLab.planes)lab=Object.assign(lab,oldLab);}catch(e){}
 var labSiteKey=HOME_LAT.toFixed(5)+","+HOME_LON.toFixed(5),labSite=lab.sites[labSiteKey]||(lab.sites[labSiteKey]={bins:Array.from({length:72},function(){return [0,0,0,0];})});
@@ -1189,6 +1222,7 @@ function labObserve(all,now,data){
  var hex=String(a.hex||"").toLowerCase();if(!/^[0-9a-f]{6}$/.test(hex))return;
  var p=lab.planes[hex],fresh=!p;if(!p){if(Object.keys(lab.planes).length>=10000)return;p=lab.planes[hex]={first:now,last:0,count:0,max:0,min:x.d};}
  if(!p.last||now-p.last>1800000)p.count++;p.last=now;p.max=Math.max(p.max,x.d);p.min=Math.min(p.min,x.d);p.cs=(a.flight||"").trim()||p.cs||hex;p.type=a.t||p.type||"";p.reg=a.r||p.reg||"";p.airline=airlineName(p.cs)||p.airline||"";
+ specialObserve(a,x,p,now);
  if(fresh&&/^(A388|B748|BLCF|A337)$/.test(p.type))labEvent(hex+"rare","Ciekawy typ: "+p.type+" · "+p.cs,now);
  if(["7500","7600","7700"].indexOf(String(a.squawk))>=0)labEvent(hex+a.squawk,"Kod transpondera "+a.squawk+" · "+p.cs,now);
  if(lab.favorites.indexOf(hex)>=0)labEvent(hex+"fav","Ulubiony samolot: "+p.cs,now);
