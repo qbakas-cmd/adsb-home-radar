@@ -103,6 +103,11 @@
 </div>
 
 <div id="alertControl">WYKRYWANIE <select id="alertRange" aria-label="Promień wykrywania"></select></div>
+<div id="labPanel" style="display:none;position:absolute;inset:0;z-index:14;background:#091725;color:#eaf6ff;padding:3vh 3vw;overflow:auto;box-sizing:border-box;font-size:clamp(14px,2vh,22px)">
+<button id="labClose" style="float:right">✕ Radar</button><h2>Laboratorium ADS-B</h2>
+<nav id="labNav"><button data-lab="range">Zasięg</button><button data-lab="spot">PlaneSpotter</button><button data-lab="sky">SkyView</button><button data-lab="alerts">Alerty i przeloty</button><button data-lab="diag">Diagnostyka</button></nav>
+<div id="labBody"></div></div>
+<style>#labPanel h2,#labPanel h3{color:#64dce8} #labPanel button,#labPanel input,#labPanel select{background:#123047;color:#eaf6ff;border:1px solid #42677e;border-radius:7px;padding:.5em;font:inherit} #labNav{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px} #labPanel table{width:100%;border-collapse:collapse} #labPanel td,#labPanel th{padding:.45em;border-bottom:1px solid #294354;text-align:left} #labPanel svg{display:block;width:100%;max-height:55vh} #labbtn{font-size:1.55vh}</style>
 <div id="radarSettings" style="display:none;position:absolute;inset:0;z-index:15;background:#091725;color:#eaf6ff;padding:3vh 4vw;overflow:auto;box-sizing:border-box;font-size:clamp(14px,2.3vh,24px)">
 <button id="settingsClose" type="button" style="float:right">✕ Radar</button><h2 style="color:#64dce8">Ustawienia radaru</h2>
 <p>Współrzędne i ustawienia są zapisywane lokalnie w tej przeglądarce.</p>
@@ -116,7 +121,7 @@
 </div>
 <style>#radarSettings label{display:grid;gap:.4vh} #radarSettings input,#radarSettings button{background:#123047;color:#eaf6ff;border:1px solid #42677e;border-radius:8px;padding:.6em;font:inherit;box-sizing:border-box} #settingsbtn{font-size:1.55vh}</style>
 <div id="history"><button id="histClose" style="float:right">✕ Radar</button><h2>Archiwum ADS-B</h2><select id="histPeriod"><option value="7">Ostatnie 7 dni</option><option value="30">Ostatnie 30 dni</option><option value="90">Ostatnie 90 dni</option></select> <button id="histExport">Eksport JSON</button><p id="histNote"></p><div id="histDays"></div><div class="histgrid" id="histRanks"></div><h2>Ruch według godziny pierwszego wykrycia</h2><div class="bars" id="histBars"></div><div style="display:flex;justify-content:space-between"><span>00:00</span><span>12:00</span><span>23:00</span></div></div>
-<div id="viewbar"><div class="pill" id="historybtn">Historia</div><div class="pill" id="settingsbtn" role="button" tabindex="0">⚙ Ustawienia</div>
+<div id="viewbar"><div class="pill" id="historybtn">Historia</div><div class="pill" id="labbtn">LAB</div><div class="pill" id="settingsbtn" role="button" tabindex="0">⚙ Ustawienia</div>
   <div class="pill on" id="vbMap">Mapa</div>
   <div class="pill" id="vbRadar">Radar</div>
   <div class="pill" id="statsbtn">Dziś: <b id="sbn">0</b> &#9992;</div>
@@ -862,6 +867,7 @@ function tick() {
         }
       });
       lastAll = all;
+      try { labObserve(all,now,data); } catch(e) { console.warn("ADS-B LAB",e); }
       lastInRange = inRange;
       updateStats(inRange, now);
       updateTrails(all);
@@ -1170,6 +1176,61 @@ $("radarSettingsForm").onsubmit=function(e){e.preventDefault();if(!this.reportVa
  var next=Object.assign({},USER_CONFIG,{homeLat:$("setLat").valueAsNumber,homeLon:$("setLon").valueAsNumber,homeAltM:$("setAlt").valueAsNumber,radarUpDeg:$("setUp").valueAsNumber,chimeVolume:$("setVol").valueAsNumber/100});
  try{localStorage.setItem(SETTINGS_KEY,JSON.stringify(next));persistHistory();location.reload();}catch(err){$("settingsError").textContent="Nie udało się zapisać ustawień w pamięci przeglądarki.";}
 };
+var LAB_KEY="adsbHomeLabV1", lab={sites:{},planes:{},events:[],favorites:[],skyDir:0,skyFov:120},labTab="range",labLast=0,labLive={},labSeen=Object.create(null),labError="",labFilter="";
+try{var oldLab=JSON.parse(localStorage.getItem(LAB_KEY)||"null");if(oldLab&&oldLab.sites&&oldLab.planes)lab=Object.assign(lab,oldLab);}catch(e){}
+var labSiteKey=HOME_LAT.toFixed(5)+","+HOME_LON.toFixed(5),labSite=lab.sites[labSiteKey]||(lab.sites[labSiteKey]={bins:Array.from({length:72},function(){return [0,0,0,0];})});
+function labSave(){try{localStorage.setItem(LAB_KEY,JSON.stringify(lab));labError="";}catch(e){labError="Brak miejsca lub dostępu do pamięci lokalnej."}}
+function labAlt(a){return typeof a.alt_geom==="number"?a.alt_geom*.3048:typeof a.alt_baro==="number"?a.alt_baro*.3048:null;}
+function labEvent(key,msg,now){if(labSeen[key]&&now-labSeen[key]<3600000)return;labSeen[key]=now;lab.events.unshift({time:now,msg:msg});lab.events=lab.events.slice(0,150);}
+function labObserve(all,now,data){
+ labLive={time:now,count:all.length,messages:data.messages,raw:(data.aircraft||[]).length};
+ all.forEach(function(x){var a=x.ac,h=labAlt(a),b=bearing(HOME_LAT,HOME_LON,a.lat,a.lon),idx=Math.floor(((b%360+360)%360)/5),band=h===null?-1:h<3000?0:h<6000?1:h<9000?2:3;
+ if(band>=0)labSite.bins[idx][band]=Math.max(labSite.bins[idx][band],x.d);
+ var hex=String(a.hex||"").toLowerCase();if(!/^[0-9a-f]{6}$/.test(hex))return;
+ var p=lab.planes[hex],fresh=!p;if(!p){if(Object.keys(lab.planes).length>=10000)return;p=lab.planes[hex]={first:now,last:0,count:0,max:0,min:x.d};}
+ if(!p.last||now-p.last>1800000)p.count++;p.last=now;p.max=Math.max(p.max,x.d);p.min=Math.min(p.min,x.d);p.cs=(a.flight||"").trim()||p.cs||hex;p.type=a.t||p.type||"";p.reg=a.r||p.reg||"";p.airline=airlineName(p.cs)||p.airline||"";
+ if(fresh&&/^(A388|B748|BLCF|A337)$/.test(p.type))labEvent(hex+"rare","Ciekawy typ: "+p.type+" · "+p.cs,now);
+ if(["7500","7600","7700"].indexOf(String(a.squawk))>=0)labEvent(hex+a.squawk,"Kod transpondera "+a.squawk+" · "+p.cs,now);
+ if(lab.favorites.indexOf(hex)>=0)labEvent(hex+"fav","Ulubiony samolot: "+p.cs,now);
+ });
+ if(now-labLast>30000){labLast=now;labSave();}if($("labPanel").style.display==="block"&&labTab!=="spot"&&(labTab!=="sky"||!$("labBody").contains(document.activeElement)))labRender();
+}
+function labNode(tag,txt,parent){var e=document.createElement(tag);if(txt!==undefined)e.textContent=txt;if(parent)parent.appendChild(e);return e;}
+function labTable(root,heads,rows){var t=labNode("table",undefined,root),tr=t.insertRow();heads.forEach(function(h){labNode("th",h,tr);});rows.forEach(function(row){var tr=t.insertRow();row.forEach(function(v){labNode("td",String(v),tr);});});return t;}
+function labSvg(root,view){var s=document.createElementNS("http://www.w3.org/2000/svg","svg");s.setAttribute("viewBox",view);root.appendChild(s);return s;}
+function labShape(s,tag,attrs,txt){var e=document.createElementNS("http://www.w3.org/2000/svg",tag);Object.keys(attrs).forEach(function(k){e.setAttribute(k,attrs[k]);});if(txt!==undefined)e.textContent=txt;s.appendChild(e);return e;}
+function labRender(){var root=$("labBody");root.textContent="";
+ if(labError)labNode("p",labError,root);
+ if(labTab==="range"){
+ labNode("h3","Rzeczywisty zasięg anteny · sektory 5°",root);var max=Math.max(0,...labSite.bins.map(function(b){return Math.max(...b);})),scale=Math.max(50,Math.ceil(max/50)*50),svg=labSvg(root,"-125 -125 250 250");
+ [25,50,75,100].forEach(function(v){labShape(svg,"circle",{cx:0,cy:0,r:v,fill:"none",stroke:"#42677e"});labShape(svg,"text",{x:3,y:-v+8,fill:"#9ec5e8","font-size":6},Math.round(v*scale/100)+" km");});
+ ["N","E","S","W"].forEach(function(t,i){var a=i*Math.PI/2;labShape(svg,"text",{x:112*Math.sin(a),y:-112*Math.cos(a)+3,fill:"#fff","font-size":8,"text-anchor":"middle"},t);});
+ ["#56d8e4","#91dc83","#f6c85f","#e68bbd"].forEach(function(c,j){labSite.bins.forEach(function(b,i){if(!b[j])return;var a=(i*5+2.5)*Math.PI/180,r=b[j]/scale*100;labShape(svg,"line",{x1:0,y1:0,x2:r*Math.sin(a),y2:-r*Math.cos(a),stroke:c,"stroke-width":1.2,"stroke-opacity":.7});});});
+ labNode("p","Maksymalny zasięg: "+max.toFixed(1)+" km. Warstwy: <3 / 3–6 / 6–9 / ≥9 km n.p.m. Dane zbierane tylko przy otwartej stronie.",root);
+ }else if(labTab==="spot"){
+ var entries=Object.entries(lab.planes),types=new Set(entries.map(function(e){return e[1].type;}).filter(Boolean)),air=new Set(entries.map(function(e){return e[1].airline;}).filter(Boolean));
+ labNode("h3",entries.length+" maszyn · "+types.size+" typów · "+air.size+" przewoźników",root);
+ var input=labNode("input",undefined,root);input.placeholder="Szukaj HEX, typu, rejestracji lub callsignu";input.value=labFilter;input.onchange=function(){labFilter=input.value;labRender();};
+ var rows=entries.filter(function(e){return (e[0]+" "+JSON.stringify(e[1])).toLowerCase().includes(labFilter.toLowerCase());}).sort(function(a,b){return b[1].last-a[1].last;}).slice(0,200);
+ var t=labTable(root,["HEX / rejestracja","Typ / callsign","Obserwacje","Najbliżej","Ostatnio","★"],[]);
+ rows.forEach(function(e){var p=e[1],tr=t.insertRow();[e[0]+" "+p.reg,p.type+" "+p.cs,p.count,p.min.toFixed(1)+" km",new Date(p.last).toLocaleString()].forEach(function(v){labNode("td",v,tr);});var btn=labNode("button",lab.favorites.includes(e[0])?"★":"☆",tr.insertCell());btn.onclick=function(){var i=lab.favorites.indexOf(e[0]);if(i<0)lab.favorites.push(e[0]);else lab.favorites.splice(i,1);labSave();labRender();};});
+ labNode("p","Do 200 najnowszych wyników; limit kolekcji 10 000 maszyn. Obserwacje rozdzielone przerwą ponad 30 minut.",root);
+ }else if(labTab==="sky"){
+ labNode("h3","SkyView · azymut i elewacja",root);
+ var controls=labNode("div",undefined,root);[["Kierunek °","skyDir",0,359],["Pole widzenia °","skyFov",30,180]].forEach(function(a){var l=labNode("label",a[0]+" ",controls),i=labNode("input",undefined,l);i.type="number";i.min=a[2];i.max=a[3];i.value=lab[a[1]];i.onchange=function(){if(i.checkValidity()&&i.value!==""){lab[a[1]]=Number(i.value);labSave();labRender();}};});
+ var svg=labSvg(root,"0 0 600 300");labShape(svg,"rect",{width:600,height:300,fill:"#102b40"});
+ [0,30,60,90].forEach(function(v){var y=270-v*2.8;labShape(svg,"line",{x1:0,x2:600,y1:y,y2:y,stroke:"#42677e"});labShape(svg,"text",{x:4,y:y-3,fill:"#9ec5e8","font-size":11},v+"°");});
+ lastAll.forEach(function(x){var a=x.ac,h=labAlt(a);if(h===null)return;var b=bearing(HOME_LAT,HOME_LON,a.lat,a.lon),d=((b-lab.skyDir+540)%360)-180,el=Math.atan2(h-HOME_ALT_M-x.d*x.d*1000/(2*6371),x.d*1000)*180/Math.PI;if(Math.abs(d)>lab.skyFov/2||el<0)return;var px=300+d/lab.skyFov*600,py=270-el*2.8;labShape(svg,"circle",{cx:px,cy:py,r:4,fill:"#64dce8"});labShape(svg,"text",{x:px+6,y:py-5,fill:"#fff","font-size":10},(a.flight||a.hex).trim());});
+ labNode("p","Widok geometryczny, bez przeszkód terenowych i refrakcji. Kierunek 0° = północ.",root);
+ }else if(labTab==="alerts"){
+ labNode("h3","Prognozowane zbliżenia w ciągu 15 minut",root);var rows=[];
+ lastAll.forEach(function(x){var a=x.ac;if(!(a.gs>0)||!Number.isFinite(a.track))return;var b=bearing(HOME_LAT,HOME_LON,a.lat,a.lon)*Math.PI/180,t=a.track*Math.PI/180,v=a.gs*1.852/60,px=x.d*Math.sin(b),py=x.d*Math.cos(b),vx=v*Math.sin(t),vy=v*Math.cos(t),m=-(px*vx+py*vy)/(v*v);if(m>=0&&m<=15){var dist=Math.hypot(px+vx*m,py+vy*m);if(dist<=5)rows.push([(a.flight||a.hex).trim(),m.toFixed(1),dist.toFixed(2)]);}});rows.sort(function(a,b){return Number(a[1])-Number(b[1]);});labTable(root,["Samolot","Za min","Odległość pozioma km"],rows);labNode("p","Prognoza zakłada stały kurs i prędkość; nie jest informacją operacyjną.",root);
+ labNode("h3","Zdarzenia",root);labTable(root,["Czas","Zdarzenie"],lab.events.slice(0,50).map(function(e){return [new Date(e.time).toLocaleString(),e.msg];}));
+ }else{
+ labNode("h3","Diagnostyka odbioru",root);labTable(root,["Parametr","Wartość"],[["Ostatnia poprawna odpowiedź",labLive.time?new Date(labLive.time).toLocaleString():"Brak"],["Wiek danych",labLive.time?Math.round((Date.now()-labLive.time)/1000)+" s":"—"],["Samoloty z pozycją",labLive.count||0],["Wszystkie rekordy odbiornika",labLive.raw||0],["Licznik wiadomości",labLive.messages===undefined?"Brak pola":labLive.messages],["Kolekcja",Object.keys(lab.planes).length]]);
+ var b=labNode("button","Eksport LAB JSON",root);b.onclick=function(){var u=URL.createObjectURL(new Blob([JSON.stringify(lab,null,2)],{type:"application/json"})),a=document.createElement("a");a.href=u;a.download="adsb-lab.json";a.click();setTimeout(function(){URL.revokeObjectURL(u);},1000);};
+ }}
+$("labbtn").onclick=function(){$("labPanel").style.display="block";labRender();};$("labClose").onclick=function(){$("labPanel").style.display="none";labSave();};$("labNav").onclick=function(e){if(e.target.dataset.lab){labTab=e.target.dataset.lab;labRender();}};window.addEventListener("pagehide",labSave);
 enrichArchive();persistHistory();
 setView("radar");
 
