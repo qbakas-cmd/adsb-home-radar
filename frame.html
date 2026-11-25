@@ -103,8 +103,20 @@
 </div>
 
 <div id="alertControl">WYKRYWANIE <select id="alertRange" aria-label="Promień wykrywania"></select></div>
+<div id="radarSettings" style="display:none;position:absolute;inset:0;z-index:15;background:#091725;color:#eaf6ff;padding:3vh 4vw;overflow:auto;box-sizing:border-box;font-size:clamp(14px,2.3vh,24px)">
+<button id="settingsClose" type="button" style="float:right">✕ Radar</button><h2 style="color:#64dce8">Ustawienia radaru</h2>
+<p>Współrzędne i ustawienia są zapisywane lokalnie w tej przeglądarce.</p>
+<form id="radarSettingsForm" style="max-width:560px;display:grid;gap:1.2vh">
+<label>Szerokość geograficzna (°)<input id="setLat" type="number" min="-90" max="90" step="any" required></label>
+<label>Długość geograficzna (°)<input id="setLon" type="number" min="-180" max="180" step="any" required></label>
+<label>Wysokość n.p.m. (m)<input id="setAlt" type="number" min="-500" max="9000" step="any" required></label>
+<label>Orientacja radaru (0 = północ, 90 = wschód)<input id="setUp" type="number" min="0" max="359" step="1" required></label>
+<label>Głośność dzienna (%)<input id="setVol" type="number" min="0" max="100" step="1" required></label>
+<button type="submit">Zapisz i odśwież radar</button><p id="settingsError" role="alert"></p></form>
+</div>
+<style>#radarSettings label{display:grid;gap:.4vh} #radarSettings input,#radarSettings button{background:#123047;color:#eaf6ff;border:1px solid #42677e;border-radius:8px;padding:.6em;font:inherit;box-sizing:border-box} #settingsbtn{font-size:1.55vh}</style>
 <div id="history"><button id="histClose" style="float:right">✕ Radar</button><h2>Archiwum ADS-B</h2><select id="histPeriod"><option value="7">Ostatnie 7 dni</option><option value="30">Ostatnie 30 dni</option><option value="90">Ostatnie 90 dni</option></select> <button id="histExport">Eksport JSON</button><p id="histNote"></p><div id="histDays"></div><div class="histgrid" id="histRanks"></div><h2>Ruch według godziny pierwszego wykrycia</h2><div class="bars" id="histBars"></div><div style="display:flex;justify-content:space-between"><span>00:00</span><span>12:00</span><span>23:00</span></div></div>
-<div id="viewbar"><div class="pill" id="historybtn">Historia</div>
+<div id="viewbar"><div class="pill" id="historybtn">Historia</div><div class="pill" id="settingsbtn" role="button" tabindex="0">⚙ Ustawienia</div>
   <div class="pill on" id="vbMap">Mapa</div>
   <div class="pill" id="vbRadar">Radar</div>
   <div class="pill" id="statsbtn">Dziś: <b id="sbn">0</b> &#9992;</div>
@@ -145,21 +157,23 @@
   <div id="photobox"><a id="photolink" target="_blank" rel="noopener"><img id="photo" alt=""></a><div id="credit"></div></div>
 </div>
 
-<script src="config.js"></script>
+
 <script>
 // ====== USTAWIENIA ======
-// Public demo position: Katowice, Poland. Set your own location in config.js.
-var USER_CONFIG = window.ADSB_CONFIG || {};
-var HOME_LAT = Number.isFinite(Number(USER_CONFIG.homeLat)) ? Number(USER_CONFIG.homeLat) : 50.2649;
-var HOME_LON = Number.isFinite(Number(USER_CONFIG.homeLon)) ? Number(USER_CONFIG.homeLon) : 19.0238;
-var HOME_ALT_M = Number.isFinite(Number(USER_CONFIG.homeAltM)) ? Number(USER_CONFIG.homeAltM) : 250;     // wysokość Twojego miejsca n.p.m. w metrach (do kąta nad horyzontem)
+// Public demo position; personal settings stay in this browser.
+var SETTINGS_KEY="adsbHomeRadarSettingsV1", USER_CONFIG={};
+try { USER_CONFIG=JSON.parse(localStorage.getItem(SETTINGS_KEY)||"{}")||{}; } catch(e){}
+function settingNumber(key,fallback,min,max){var v=USER_CONFIG[key];return typeof v==="number"&&Number.isFinite(v)&&v>=min&&v<=max?v:fallback;}
+var HOME_LAT = settingNumber("homeLat",50.2649,-90,90);
+var HOME_LON = settingNumber("homeLon",19.0238,-180,180);
+var HOME_ALT_M = settingNumber("homeAltM",250,-500,9000);     // wysokość Twojego miejsca n.p.m. w metrach (do kąta nad horyzontem)
 var RADIUS_KM = 20;
 var ALERT_RANGES = [5,10,15,20,30,50,75,100,150,200];
 try { var savedAlert = Number(localStorage.getItem("adsbAlertRange")); if (ALERT_RANGES.indexOf(savedAlert)>=0) RADIUS_KM=savedAlert; } catch(e) {}       // promień alertu
 var DEBUG = false;        // pasek diagnostyczny na dole karty (zdjęcia); po naprawie ustaw false
 var CHIME = true;         // sygnał dźwiękowy przy nowym samolocie w zasięgu
-var CHIME_VOLUME = 0.35;  // głośność sygnału (0.05 - 1)
-var RADAR_UP_DEG = 0;     // co jest u góry radaru: 0 = północ (np. 273 = zachód, jeśli chcesz widzieć radar jak przez okno)
+var CHIME_VOLUME = settingNumber("chimeVolume",0.35,0,1);  // głośność sygnału (0.05 - 1)
+var RADAR_UP_DEG = settingNumber("radarUpDeg",0,0,359);     // co jest u góry radaru: 0 = północ (np. 273 = zachód, jeśli chcesz widzieć radar jak przez okno)
 var NIGHT_FROM = 22;          // tryb nocny od tej godziny (0-23)
 var NIGHT_TO = 6;             // ... do tej godziny
 var NIGHT_DIM = 0.45;         // jasność obrazu w nocy (0.2 - 1)
@@ -1146,6 +1160,16 @@ window.addEventListener("pagehide",persistHistory);
 function showHistory(){archiveDay();enrichArchive();persistHistory();var days=Number($("histPeriod").value), keys=[], now=new Date();for(var i=days-1;i>=0;i--){var dt=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i);keys.push(dt.getFullYear()+"-"+pad2(dt.getMonth()+1)+"-"+pad2(dt.getDate()));} var el=$("histDays");el.textContent="";var table=document.createElement("table");el.appendChild(table);function row(vals,head){var tr=table.insertRow();vals.forEach(function(v){var td=document.createElement(head?"th":"td");td.textContent=v;tr.appendChild(td);});}row(["Dzień","Maszyny","Najwyżej","Najniżej","Najszybciej","Najwolniej","Najbliżej","Promień km"],true);var airlines={},routes={},headings={},hours=Array(24).fill(0),total=0,known=0,knownAirlines=0;function add(o,k){if(k)o[k]=(o[k]||0)+1;}keys.forEach(function(k){var d=historyDays[k];var date=new Date(k+"T12:00:00").toLocaleDateString("pl-PL",{weekday:"short",day:"numeric",month:"numeric"});function best(t,u){var r=d&&d.top&&d.top[t]&&d.top[t][0];return r?r.cs+" · "+r.v+u:"—";}row([date,d?d.n:"—",best("alt"," m"),best("low"," m"),best("spd"," km/h"),best("slow"," km/h"),best("dist"," km"),d?Object.keys(d.ranges||{}).join(", "):"—"]);if(d)Object.values(d.records||{}).forEach(function(r){total++;if(r.route)known++;if(r.airline)knownAirlines++;add(airlines,r.airline||"Nierozpoznane");add(routes,r.route);add(headings,r.heading);hours[r.hour]++;});});$("histNote").textContent=(historyError?"UWAGA: błąd zapisu lokalnego. ":"")+"Archiwum lokalne · trasy rozpoznane: "+known+" / "+total+" · przewoźnicy: "+knownAirlines+" / "+total+" obserwacji dziennych · brak dnia ≠ brak ruchu";var ranks=$("histRanks");ranks.textContent="";[["Linie lotnicze",airlines],["Trasy",routes],["Kierunek lotu",headings]].forEach(function(pair){var tile=document.createElement("div");tile.className="tile";var b=document.createElement("b");b.textContent=pair[0];tile.appendChild(b);var entries=Object.entries(pair[1]).sort(function(a,b){return b[1]-a[1];}).slice(0,pair[0]==="Linie lotnicze"?Infinity:5);entries.forEach(function(e){var p=document.createElement("div");p.textContent=e[0]+" · "+e[1];tile.appendChild(p);});if(!entries.length)tile.appendChild(document.createTextNode("Brak danych"));ranks.appendChild(tile);});var bars=$("histBars");bars.textContent="";var max=Math.max(1,...hours);hours.forEach(function(n,i){var bar=document.createElement("div");bar.style.height=(100*n/max)+"%";bar.title=pad2(i)+":00 – "+n;bars.appendChild(bar);});}
 $("historybtn").onclick=function(){$("history").style.display="block";showHistory();};$("histClose").onclick=function(){$("history").style.display="none";};$("histPeriod").onchange=showHistory;$("histExport").onclick=function(){archiveDay();persistHistory();var url=URL.createObjectURL(new Blob([JSON.stringify(historyDays,null,2)],{type:"application/json"}));var a=document.createElement("a");a.href=url;a.download="adsb-history-"+dayKey()+".json";a.click();setTimeout(function(){URL.revokeObjectURL(url);},1000);};
 ALERT_RANGES.forEach(function(n){var o=document.createElement("option");o.value=n;o.textContent=n+" km";$("alertRange").appendChild(o);});$("alertRange").value=RADIUS_KM;$("alertRange").onchange=function(){RADIUS_KM=Number(this.value);try{localStorage.setItem("adsbAlertRange",String(RADIUS_KM));}catch(e){}renderBigRadar();};
+function openRadarSettings(){
+ $("setLat").value=HOME_LAT;$("setLon").value=HOME_LON;$("setAlt").value=HOME_ALT_M;$("setUp").value=RADAR_UP_DEG;$("setVol").value=Math.round(CHIME_VOLUME*100);$("settingsError").textContent="";$("radarSettings").style.display="block";
+}
+$("settingsbtn").onclick=openRadarSettings;
+$("settingsbtn").onkeydown=function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();openRadarSettings();}};
+$("settingsClose").onclick=function(){$("radarSettings").style.display="none";};
+$("radarSettingsForm").onsubmit=function(e){e.preventDefault();if(!this.reportValidity())return;
+ var next=Object.assign({},USER_CONFIG,{homeLat:$("setLat").valueAsNumber,homeLon:$("setLon").valueAsNumber,homeAltM:$("setAlt").valueAsNumber,radarUpDeg:$("setUp").valueAsNumber,chimeVolume:$("setVol").valueAsNumber/100});
+ try{localStorage.setItem(SETTINGS_KEY,JSON.stringify(next));persistHistory();location.reload();}catch(err){$("settingsError").textContent="Nie udało się zapisać ustawień w pamięci przeglądarki.";}
+};
 enrichArchive();persistHistory();
 setView("radar");
 
