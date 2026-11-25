@@ -103,10 +103,10 @@
 </div>
 
 <div id="alertControl">WYKRYWANIE <select id="alertRange" aria-label="Promień wykrywania"></select></div>
-<div id="specialAlert" role="status" style="display:none;position:absolute;top:12vh;left:50%;transform:translateX(-50%);width:min(86vw,540px);z-index:13;background:#091725;color:#eaf6ff;border:3px solid #e9b74e;border-radius:12px;padding:16px;box-sizing:border-box;box-shadow:0 8px 30px #0009;pointer-events:auto"><button id="specialClose" style="float:right;background:#123047;color:white;border:1px solid #42677e;border-radius:5px;padding:6px">✕</button><div id="specialCategory" style="font-weight:bold"></div><h2 id="specialTitle" style="margin:.4em 0"></h2><div id="specialDetails"></div></div>
+<div id="demoBanner" style="display:none;position:fixed;top:1vh;left:50%;transform:translateX(-50%);z-index:15;background:#40294f;color:#fff;padding:8px 14px;border:2px solid #e68bbd;border-radius:8px">TRYB DEMO · <span id="demoInfo"></span> <button id="demoStop">Zakończ</button></div><div id="specialAlert" role="status" style="display:none;position:absolute;top:12vh;left:50%;transform:translateX(-50%);width:min(86vw,540px);z-index:13;background:#091725;color:#eaf6ff;border:3px solid #e9b74e;border-radius:12px;padding:16px;box-sizing:border-box;box-shadow:0 8px 30px #0009;pointer-events:auto"><button id="specialClose" style="float:right;background:#123047;color:white;border:1px solid #42677e;border-radius:5px;padding:6px">✕</button><div id="specialCategory" style="font-weight:bold"></div><h2 id="specialTitle" style="margin:.4em 0"></h2><div id="specialDetails"></div></div>
 <div id="labPanel" style="display:none;position:absolute;inset:0;z-index:14;background:#091725;color:#eaf6ff;padding:3vh 3vw;overflow:auto;box-sizing:border-box;font-size:clamp(14px,2vh,22px)">
 <button id="labClose" style="float:right">✕ Radar</button><h2>Laboratorium ADS-B</h2>
-<nav id="labNav"><button data-lab="range">Zasięg</button><button data-lab="spot">PlaneSpotter</button><button data-lab="sky">SkyView</button><button data-lab="alerts">Alerty i przeloty</button><button data-lab="diag">Diagnostyka</button></nav>
+<nav id="labNav"><button data-lab="range">Zasięg</button><button data-lab="spot">PlaneSpotter</button><button data-lab="sky">SkyView</button><button data-lab="alerts">Alerty i przeloty</button><button data-lab="demo">DEMO</button><button data-lab="diag">Diagnostyka</button></nav>
 <div id="labBody"></div></div>
 <style>#labPanel h2,#labPanel h3{color:#64dce8} #labPanel button,#labPanel input,#labPanel select{background:#123047;color:#eaf6ff;border:1px solid #42677e;border-radius:7px;padding:.5em;font:inherit} #labNav{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px} #labPanel table{width:100%;border-collapse:collapse} #labPanel td,#labPanel th{padding:.45em;border-bottom:1px solid #294354;text-align:left} #labPanel svg{display:block;width:100%;max-height:55vh} #labbtn{font-size:1.55vh}</style>
 <div id="radarSettings" style="display:none;position:absolute;inset:0;z-index:15;background:#091725;color:#eaf6ff;padding:3vh 4vw;overflow:auto;box-sizing:border-box;font-size:clamp(14px,2.3vh,24px)">
@@ -1122,6 +1122,7 @@ function renderBigRadar() {
     var cp = ptR(ci * 45, ci % 2 === 0 ? 99 : 98.5), isN = ci === 0, card = ci % 2 === 0;
     A(svgText(COMPASS8[ci], { x: cp.x.toFixed(1), y: (cp.y + (isN ? 3 : 2.2)).toFixed(1), "font-size": isN ? 8 : (card ? 6.4 : 4.6), fill: isN ? "#ffd24d" : (card ? "#e6eef5" : "#7f9bb3"), "text-anchor": "middle", "font-weight": "bold" }));
   }
+  demoDraw(svg);
   A(svgText("Samolotów w zasięgu: " + planes.length, { x: 100, y: 102, "font-size": 4, fill: "#8db9ce", "text-anchor": "end" }));
 }
 
@@ -1209,8 +1210,8 @@ async function piperVoice(msg,c){var blob=await voiceFetch("speak",{method:"POST
 async function drainVoice(){if(voiceBusy)return;voiceBusy=true;try{while(voiceQueue.length){var q=voiceQueue.shift(),c=q.c;try{if(q.test)$("spStatus").textContent="Generowanie komunikatu…";var engine=c.spEngine;if(engine!=="browser"){try{await piperVoice(q.msg,c);engine="piper";}catch(e){if(engine!=="auto")throw e;engine="browser";await browserVoice(q.msg,c);}}else await browserVoice(q.msg,c);if(q.test)$("spStatus").textContent="Test OK · "+engine;}catch(e){if(q.test)$("spStatus").textContent="Błąd odtwarzania: "+e.message;}}}finally{voiceBusy=false;}}
 function specialSpeak(msg,test){if(voiceQueue.length>=12){if(test)$("spStatus").textContent="Kolejka pełna";return;}voiceQueue.push({msg:msg,test:test,c:voiceOptions(test)});drainVoice();}
 $("spTest").onclick=function(){specialSpeak("Test powiadomienia. Radar lotniczy jest gotowy.",true);};
-function specialShow(){if(specialTimer||!specialQueue.length)return;var e=specialQueue.shift(),el=$("specialAlert");el.style.borderColor=e.color;$("specialCategory").style.color=e.color;$("specialCategory").textContent=e.label;$("specialTitle").textContent=e.title;$("specialDetails").textContent=e.details;el.style.display="block";
- if(!isNight()||specialEnabled("spNight")){if(specialEnabled("spSound")){try{chime();}catch(err){}}if(specialEnabled("spVoice"))specialSpeak("Uwaga. "+e.label+". "+e.title+(voiceOptions(false).spDetailed?". "+e.details.replace(/ km\/h/g," kilometrów na godzinę").replace(/ km/g," kilometrów").replace(/ m\b/g," metrów").replace(/ · /g,". "):""),false);}
+function specialShow(){if(specialTimer||!specialQueue.length)return;var e=specialQueue.shift(),el=$("specialAlert");el.style.borderColor=e.color;$("specialCategory").style.color=e.color;$("specialCategory").textContent=(e.demo?"DEMO · ":"")+e.label;$("specialTitle").textContent=e.title;$("specialDetails").textContent=e.details;el.style.display="block";
+ if(!isNight()||specialEnabled("spNight")){if(specialEnabled("spSound")){try{chime();}catch(err){}}if(specialEnabled("spVoice"))specialSpeak((e.demo?"Test symulacji. ":"Uwaga. ")+e.label+". "+e.title+(voiceOptions(false).spDetailed?". "+e.details.replace(/ km\/h/g," kilometrów na godzinę").replace(/ km/g," kilometrów").replace(/ m\b/g," metrów").replace(/ · /g,". "):""),false);}
  specialTimer=setTimeout(specialDismiss,12000);}
 function specialDismiss(){clearTimeout(specialTimer);specialTimer=null;$("specialAlert").style.display="none";specialShow();}
 $("specialClose").onclick=specialDismiss;
@@ -1243,7 +1244,7 @@ function labObserve(all,now,data){
  if(["7500","7600","7700"].indexOf(String(a.squawk))>=0)labEvent(hex+a.squawk,"Kod transpondera "+a.squawk+" · "+p.cs,now);
  if(lab.favorites.indexOf(hex)>=0)labEvent(hex+"fav","Ulubiony samolot: "+p.cs,now);
  });
- if(now-labLast>30000){labLast=now;labSave();}if($("labPanel").style.display==="block"&&labTab!=="spot"&&(labTab!=="sky"||!$("labBody").contains(document.activeElement)))labRender();
+ if(now-labLast>30000){labLast=now;labSave();}if($("labPanel").style.display==="block"&&labTab!=="spot"&&labTab!=="demo"&&(labTab!=="sky"||!$("labBody").contains(document.activeElement)))labRender();
 }
 function labNode(tag,txt,parent){var e=document.createElement(tag);if(txt!==undefined)e.textContent=txt;if(parent)parent.appendChild(e);return e;}
 function labTable(root,heads,rows){var t=labNode("table",undefined,root),tr=t.insertRow();heads.forEach(function(h){labNode("th",h,tr);});rows.forEach(function(row){var tr=t.insertRow();row.forEach(function(v){labNode("td",String(v),tr);});});return t;}
@@ -1251,7 +1252,8 @@ function labSvg(root,view){var s=document.createElementNS("http://www.w3.org/200
 function labShape(s,tag,attrs,txt){var e=document.createElementNS("http://www.w3.org/2000/svg",tag);Object.keys(attrs).forEach(function(k){e.setAttribute(k,attrs[k]);});if(txt!==undefined)e.textContent=txt;s.appendChild(e);return e;}
 function labRender(){var root=$("labBody");root.textContent="";
  if(labError)labNode("p",labError,root);
- if(labTab==="range"){
+ if(labTab==="demo"){demoPanel(root);}
+ else if(labTab==="range"){
  labNode("h3","Rzeczywisty zasięg anteny · sektory 5°",root);var max=Math.max(0,...labSite.bins.map(function(b){return Math.max(...b);})),scale=Math.max(50,Math.ceil(max/50)*50),svg=labSvg(root,"-125 -125 250 250");
  [25,50,75,100].forEach(function(v){labShape(svg,"circle",{cx:0,cy:0,r:v,fill:"none",stroke:"#42677e"});labShape(svg,"text",{x:3,y:-v+8,fill:"#9ec5e8","font-size":6},Math.round(v*scale/100)+" km");});
  ["N","E","S","W"].forEach(function(t,i){var a=i*Math.PI/2;labShape(svg,"text",{x:112*Math.sin(a),y:-112*Math.cos(a)+3,fill:"#fff","font-size":8,"text-anchor":"middle"},t);});
@@ -1281,6 +1283,24 @@ function labRender(){var root=$("labBody");root.textContent="";
  var b=labNode("button","Eksport LAB JSON",root);b.onclick=function(){var u=URL.createObjectURL(new Blob([JSON.stringify(lab,null,2)],{type:"application/json"})),a=document.createElement("a");a.href=u;a.download="adsb-lab.json";a.click();setTimeout(function(){URL.revokeObjectURL(u);},1000);};
  }}
 $("labbtn").onclick=function(){$("labPanel").style.display="block";labRender();};$("labClose").onclick=function(){$("labPanel").style.display="none";labSave();};$("labNav").onclick=function(e){if(e.target.dataset.lab){labTab=e.target.dataset.lab;labRender();}};window.addEventListener("pagehide",labSave);
+var demoTimer=null,demoStartTime=0,demoEntered=false,demoActiveAlert=false;
+var demoCases=[["Nietypowy samolot","Airbus A380","#e9b74e"],["Samolot oznaczony jako wojskowy","Boeing C-17","#ff9e55"],["Prawdopodobny lot ratunkowy","Eurocopter EC135","#91dc83"],["Kod awaryjny 7700","Boeing 737","#ff5555"],["Ulubiony samolot","Antonow An-124","#c99aff"]];
+function demoAlert(i){var c=demoCases[i];if(specialQueue.length>=12)return;specialQueue.push({demo:true,label:c[0],title:c[1],details:"18 km · 2500 m · 450 km/h",color:c[2]});specialShow();}
+function demoOpen(){ $("labPanel").style.display="none";setView("radar");$("demoBanner").style.display="block";}
+function demoPanel(root){labNode("h3","Symulator DEMO",root);labNode("p","Fikcyjne alerty i ruch na radarze. Bez zapisu do historii, kolekcji i statystyk. Dźwięk respektuje ustawienia głosu i tryb nocny.",root);
+demoCases.forEach(function(c,i){var b=labNode("button",c[0]+" · "+c[1],root);b.onclick=function(){demoOpen();$("demoInfo").textContent="Test alertu";demoAlert(i);};});
+var b=labNode("button","Test kolejki wszystkich alertów",root);b.onclick=function(){demoOpen();$("demoInfo").textContent="Test kolejki";demoCases.forEach(function(c,i){demoAlert(i);});};
+var f=labNode("button","Symulacja przelotu i wejścia w strefę",root);f.onclick=demoStart;
+}
+function demoStart(){if(demoTimer)clearInterval(demoTimer);demoStartTime=Date.now();demoEntered=false;demoOpen();demoTimer=setInterval(function(){if(Date.now()-demoStartTime>=60000){demoStop();return;}renderBigRadar();},250);renderBigRadar();}
+function demoDraw(svg){if(!demoTimer)return;var t=Math.min(1,(Date.now()-demoStartTime)/60000),start=Math.max(bigKm*.85,RADIUS_KM*1.2),end=-start,x=start*(1-2*t),y=Math.min(RADIUS_KM*.25,bigKm*.15),d=Math.hypot(x,y),b=(Math.atan2(x,y)*180/Math.PI+360)%360;
+$("demoInfo").textContent="A380 · "+d.toFixed(1)+" km · CPA "+y.toFixed(1)+" km za "+Math.max(0,30-t*60).toFixed(0)+" s";
+if(!demoEntered&&d<=RADIUS_KM){demoEntered=true;demoAlert(0);}
+if(d>bigKm)return;var p=polarB(b,d),hd=270-RADAR_UP_DEG;
+svg.appendChild(svgEl("polygon",{points:"0,-6 4,6 0,3 -4,6",transform:"translate("+p.x+","+p.y+") rotate("+hd+")",fill:"#e68bbd",stroke:"#fff","stroke-width":.6}));
+svg.appendChild(svgText("DEMO A380",{x:p.x+5,y:p.y-5,fill:"#e68bbd","font-size":5,"font-weight":"bold",stroke:"#07121c","stroke-width":.7,"paint-order":"stroke"}));}
+function demoStop(){if(demoTimer)clearInterval(demoTimer);demoTimer=null;specialQueue=specialQueue.filter(function(e){return !e.demo;});if($("specialCategory").textContent.indexOf("DEMO · ")===0)specialDismiss();$("demoBanner").style.display="none";renderBigRadar();}
+$("demoStop").onclick=demoStop;
 enrichArchive();persistHistory();
 setView("radar");
 
