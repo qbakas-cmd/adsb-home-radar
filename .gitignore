@@ -5,3 +5,8 @@ config.local.js
 *.tmp
 .DS_Store
 Thumbs.db
+
+# Private voice recordings
+/audio/
+*.mp3
+radar-audio.zip
